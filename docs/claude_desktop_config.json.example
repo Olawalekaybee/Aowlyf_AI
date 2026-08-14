@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "aowlyf-ai": {
+      "command": "python",
+      "args": ["/absolute/path/to/AOWLYF_AI/mcp_server/server.py"],
+      "env": {
+        "DATABASE_URL": "postgresql://impactlab:changeme@localhost:5432/impactlab"
+      }
+    }
+  }
+}

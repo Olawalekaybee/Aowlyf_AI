@@ -1,0 +1,82 @@
+version: "3.9"
+
+# All images below publish arm64 builds, which the DGX Spark (Grace CPU) needs.
+# GPU (Blackwell) is used by Ollama for local model inference via the NVIDIA
+# Container Toolkit — install that on the host first:
+#   https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html
+
+services:
+
+  postgres:
+    image: postgres:16
+    container_name: aowlyf-ai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: impactlab
+      POSTGRES_USER: impactlab
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    container_name: aowlyf-ai-redis
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
+    ports:
+      - "6379:6379"
+
+  minio:
+    image: minio/minio:latest
+    container_name: aowlyf-ai-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+    volumes:
+      - miniodata:/data
+    ports:
+      - "9000:9000"   # S3 API — used for per-staff / per-lab / per-project folders
+      - "9001:9001"   # Web console
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: aowlyf-ai-qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrantdata:/qdrant/storage
+    ports:
+      - "6333:6333"   # used for RAG over lab docs, reports, prototypes
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: aowlyf-ai-ollama
+    restart: unless-stopped
+    volumes:
+      - ollamadata:/root/.ollama
+    ports:
+      - "11434:11434"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # The MCP server (mcp_server/server.py) is intentionally NOT containerized
+  # yet — run it directly with `python server.py` during development so
+  # Claude Desktop/Code can connect to it over stdio or local HTTP. Once
+  # stable, wrap it in its own service here.
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+  qdrantdata:
+  ollamadata:
