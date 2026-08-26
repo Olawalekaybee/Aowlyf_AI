@@ -1,3 +1,4 @@
+.venv/
 .env
 scripts/staff_credentials_DO_NOT_COMMIT.csv
 __pycache__/
