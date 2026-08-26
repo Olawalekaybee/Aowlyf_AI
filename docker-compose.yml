@@ -1,4 +1,4 @@
-version: "3.9"
+
 
 # All images below publish arm64 builds, which the DGX Spark (Grace CPU) needs.
 # GPU (Blackwell) is used by Ollama for local model inference via the NVIDIA
