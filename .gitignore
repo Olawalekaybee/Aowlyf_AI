@@ -1,0 +1,4 @@
+.env
+scripts/staff_credentials_DO_NOT_COMMIT.csv
+__pycache__/
+*.pyc
