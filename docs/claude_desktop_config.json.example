@@ -4,7 +4,7 @@
       "command": "python",
       "args": ["/absolute/path/to/AOWLYF_AI/mcp_server/server.py"],
       "env": {
-        "DATABASE_URL": "postgresql://impactlab:changeme@localhost:5432/impactlab"
+        "DATABASE_URL": "postgresql://impactlab:olawale_@@_2026@localhost:5432/impactlab"
       }
     }
   }

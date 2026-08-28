@@ -1,7 +1,4 @@
----
 
-
----
 # AOWLYF_AI — Impact Lab / Innov8 Hub Ops Platform (DGX Spark + Claude)
 
 A private, locally-run agentic system for managing every lab, project, staff
@@ -106,7 +103,7 @@ docker exec -it impactlab-ollama ollama pull llama3.1:8b
 # 5. Run the MCP server
 cd mcp_server
 pip install -r requirements.txt
-export DATABASE_URL=postgresql://impactlab:changeme@localhost:5432/impactlab
+export DATABASE_URL=postgresql://impactlab:changeme@localhost:5433/impactlab
 python server.py
 
 # 6. Point Claude Desktop at it
@@ -146,7 +143,7 @@ Run order:
 ```bash
 cd scripts
 pip install -r requirements.txt
-export DATABASE_URL=postgresql://impactlab:changeme@localhost:5432/impactlab
+export DATABASE_URL=postgresql://impactlab:changeme@localhost:5433/impactlab
 export MINIO_ENDPOINT=localhost:9000
 export MINIO_ACCESS_KEY=impactlab-admin      # from your .env
 export MINIO_SECRET_KEY=<your MINIO_ROOT_PASSWORD>
@@ -169,16 +166,55 @@ Add a `login`/session layer (even a simple JWT-based one) next, so staff
 authenticate with the password `provision_staff.py` generated for them and
 that identity becomes their `acting_as` id in every tool call.
 
-**Phase 3 — Web app: dashboard + Gantt**
-A small React/Next.js frontend, talking to a REST layer over the same
-Postgres tables:
+**Phase 3 — Web app: dashboard + Gantt** ✅ done
+A separate, human-facing layer from the MCP server — same Postgres
+database, same permission rules, different front door. Staff log in
+directly with the email/password `provision_staff.py` set up for them;
+Claude keeps using the MCP server exactly as before. Lives in `webapp/`:
 
-- Per-lab dashboard: active projects, who's on them, status.
-- Gantt view (Frappe Gantt or a custom D3 timeline) driven by `tasks.start_date`/
-  `end_date`/`progress_pct`, updated live over WebSockets so it animates as
-  people update task progress — no page refresh needed.
-- General Update / Procurement / Internal Review request forms that write
-  into `concerns`/`procurement_requests` and land in your admin queue.
+- `webapp/backend/` — a small FastAPI app: `/auth/login` (checks the
+  bcrypt password hash, issues a JWT), `/projects` and
+  `/projects/{id}/tasks` (scoped the same way as the MCP tools — admins
+  see everything, everyone else sees their own lab + projects they're a
+  member of), and a `/ws` WebSocket that pushes task updates to every
+  connected dashboard live, no page refresh needed.
+- `webapp/frontend/` — a React + Vite dashboard: a login screen, a project
+  list grouped by lab, and a Gantt view where each task's bar width
+  animates smoothly when its progress changes (via the WebSocket push).
+  Styled as a dark "engineering console" — grid background, amber signal
+  color for in-progress work with a live pulse indicator, teal for done,
+  red for blocked.
+
+Run order (two terminals, alongside your existing Docker stack):
+
+```bash
+# Terminal 1 — backend
+cd webapp/backend
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+# (reads DATABASE_URL and JWT_SECRET from your project .env automatically)
+
+# Terminal 2 — frontend
+cd webapp/frontend
+npm install
+npm run dev
+# opens on http://localhost:5173
+```
+
+Log in with any staff email + the password `provision_staff.py` generated
+for them (see `scripts/staff_credentials_DO_NOT_COMMIT.csv` before you
+delete it). No projects exist yet fresh out of Phase 2 — either create one
+via Claude/the MCP tools, or run `scripts/seed_demo_project.sql` for a
+one-command demo project to see the Gantt working immediately:
+
+```bash
+docker exec -i aowlyf-ai-postgres psql -U impactlab -d impactlab < scripts/seed_demo_project.sql
+```
+
+**Not yet built:** a "create project" / "create task" UI (for now that
+happens via Claude or direct MCP calls), and the General Update /
+Procurement / Internal Review request forms that write into
+`concerns`/`procurement_requests`.
 
 **Phase 4 — WhatsApp reminders**
 Twilio WhatsApp Business API (there's a whole Twilio skill set already
@@ -202,6 +238,48 @@ Real auth (rotate the password-hashing approach if needed, add MFA for the
 admin account), backups for Postgres/MinIO, and a proper folder-serving layer
 that enforces `folders`/`folder_grants` on every file read, not just at the
 project level.
+
+**Phase 3 — Login layer + Gantt dashboard** ✅ started
+See `backend/` and `frontend/`:
+
+- `backend/main.py` — a FastAPI app: `/auth/login` (email + password → JWT),
+  `/me`, `/labs`, `/projects` (permission-scoped: admins see everything,
+  everyone else sees their own lab + projects they're a member of),
+  `/projects/{id}/tasks` (drives the Gantt), `/dashboard/summary`, and the
+  `/concerns` pipeline (file one, admin lists/resolves). Same Postgres
+  database as the MCP server — this is the plain-HTTP interface for the web
+  dashboard, while `mcp_server/server.py` stays the interface Claude uses.
+- `backend/auth.py` — bcrypt password verification + JWT issuing/checking.
+- `frontend/index.html` — a single-file dashboard (React via CDN, no build
+  step) with a login screen and a live-updating Gantt view — task bars
+  poll every 5 seconds so progress updates show up without a manual
+  refresh, and colors shift (blue → green/red) as a task's status changes.
+
+Run order:
+
+```bash
+# Backend
+cd backend
+pip install -r requirements.txt
+export DATABASE_URL=postgresql://impactlab:changeme@localhost:5433/impactlab
+export JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+# Frontend (separate terminal) — serve it rather than opening the file
+# directly, so the browser's fetch calls to the API behave correctly
+cd ../frontend
+python3 -m http.server 5500
+# then open http://localhost:5500 in a browser
+```
+
+Log in with the admin account (or any provisioned staff member's email +
+the initial password from `staff_credentials_DO_NOT_COMMIT.csv`) — you
+should NOT be able to see other labs' projects unless you're admin.
+
+**Not built yet:** the General Update / Procurement / Internal Review
+request forms (the `/concerns` and `/procurement_requests` tables and API
+support them; the UI for filing one is still to come), WhatsApp reminders,
+and a "change my password" flow for staff logging in for the first time.
 
 ## 7. Immediate next decision
 
