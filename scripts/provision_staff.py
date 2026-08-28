@@ -14,13 +14,15 @@ Reads a CSV roster and, for each person:
      individually. Delete that file once everyone has logged in and
      changed their password.
 
-Safe to re-run: staff already in the database (matched by email) are
-skipped. Rows with a placeholder name (starting with "[FILL IN") are
-skipped with a warning — edit staff_roster.csv first.
+Safe to re-run: staff already in the database are skipped — matched by
+email when one is set, or by full name + lab when it isn't (so re-running
+this on rows with no email yet doesn't create duplicates). Rows with a
+placeholder name (starting with "[FILL IN") are skipped with a warning —
+edit staff_roster.csv first.
 
 Usage:
     pip install -r requirements.txt
-    export DATABASE_URL=postgresql://impactlab:changeme@localhost:5432/impactlab
+    export DATABASE_URL=postgresql://impactlab:changeme@localhost:5433/impactlab
     export MINIO_ENDPOINT=localhost:9000
     export MINIO_ACCESS_KEY=...
     export MINIO_SECRET_KEY=...
@@ -130,6 +132,16 @@ def main(csv_path: str):
                 cur.execute("SELECT id FROM staff WHERE email = %s", (email,))
                 if cur.fetchone():
                     print(f"Skipping {full_name} — already exists ({email})")
+                    continue
+            else:
+                # No email on file — fall back to matching on name + lab so
+                # re-running this script doesn't create duplicate records.
+                cur.execute(
+                    "SELECT id FROM staff WHERE full_name = %s AND lab_id = %s",
+                    (full_name, lab_id),
+                )
+                if cur.fetchone():
+                    print(f"Skipping {full_name} — already exists in this lab (no email set)")
                     continue
 
             password = generate_password()
