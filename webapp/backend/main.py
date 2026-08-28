@@ -14,8 +14,9 @@ Reads DATABASE_URL and JWT_SECRET from your project's .env automatically
 (no need to re-export them in every terminal).
 """
 
+import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -68,6 +69,32 @@ class TaskUpdate(BaseModel):
     status: Optional[str] = None
 
 
+class ProjectCreate(BaseModel):
+    name: str
+    lab_id: str
+    category: Optional[str] = None
+    description: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+
+
+class ProjectStatusUpdate(BaseModel):
+    status: str
+
+
+class TaskCreate(BaseModel):
+    title: str
+    assignee_id: Optional[str] = None
+    start_date: str
+    end_date: str
+    description: Optional[str] = None
+
+
+class MemberAdd(BaseModel):
+    staff_id: str
+    role_on_team: str = "contributor"
+
+
 class ConnectionManager:
     """Tracks connected dashboard clients so task updates can be pushed
     to everyone live, without a page refresh."""
@@ -103,9 +130,14 @@ def create_token(staff: dict) -> str:
         "role": staff["role"],
         "lab_id": str(staff["lab_id"]) if staff["lab_id"] else None,
         "full_name": staff["full_name"],
+        "can_grant_team_membership": staff["can_grant_team_membership"],
         "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRY_HOURS),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+def can_manage_team(current: dict) -> bool:
+    return current["role"] == "admin" or current.get("can_grant_team_membership")
 
 
 async def get_current_staff(creds: HTTPAuthorizationCredentials = Depends(security)) -> dict:
@@ -133,6 +165,7 @@ async def login(body: LoginRequest):
                 "full_name": row["full_name"],
                 "role": row["role"],
                 "lab_id": str(row["lab_id"]) if row["lab_id"] else None,
+                "can_grant_team_membership": row["can_grant_team_membership"],
             },
         }
 
@@ -148,6 +181,142 @@ async def list_labs(current: dict = Depends(get_current_staff)):
     async with pool.acquire() as conn:
         rows = await conn.fetch("SELECT id, name, kind FROM labs ORDER BY name")
         return [dict(r) for r in rows]
+
+
+@app.get("/staff")
+async def list_staff(current: dict = Depends(get_current_staff)):
+    """For assignee/member pickers. Admins see everyone; everyone else
+    sees only their own lab, same visibility rule as everywhere else."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        if current["role"] == "admin":
+            rows = await conn.fetch(
+                "SELECT id, full_name, role, lab_id FROM staff WHERE is_active = TRUE ORDER BY full_name"
+            )
+        else:
+            rows = await conn.fetch(
+                "SELECT id, full_name, role, lab_id FROM staff WHERE is_active = TRUE AND lab_id = $1 ORDER BY full_name",
+                current["lab_id"],
+            )
+        return [dict(r) for r in rows]
+
+
+@app.post("/projects")
+async def create_project(body: ProjectCreate, current: dict = Depends(get_current_staff)):
+    """Anyone can propose a project. Admin-created projects go straight to
+    'active'; everyone else's start as 'proposed' until an admin activates
+    them — team ADDITIONS are still admin/permitted-only, separately, via
+    /projects/{id}/members."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        is_admin = current["role"] == "admin"
+        row = await conn.fetchrow(
+            """INSERT INTO projects (name, lab_id, category, description, status, start_date, end_date, created_by, approved_by)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *""",
+            body.name,
+            body.lab_id,
+            body.category,
+            body.description,
+            "active" if is_admin else "proposed",
+            date.fromisoformat(body.start_date) if body.start_date else None,
+            date.fromisoformat(body.end_date) if body.end_date else None,
+            current["sub"],
+            current["sub"] if is_admin else None,
+        )
+        return dict(row)
+
+
+@app.patch("/projects/{project_id}")
+async def update_project_status(
+    project_id: str, body: ProjectStatusUpdate, current: dict = Depends(get_current_staff)
+):
+    if current["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Only the admin can change a project's status")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "UPDATE projects SET status = $1, approved_by = $2, updated_at = now() WHERE id = $3 RETURNING *",
+            body.status,
+            current["sub"],
+            project_id,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return dict(row)
+
+
+@app.post("/projects/{project_id}/members")
+async def add_member(project_id: str, body: MemberAdd, current: dict = Depends(get_current_staff)):
+    if not can_manage_team(current):
+        raise HTTPException(status_code=403, detail="You're not permitted to add people to project teams")
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.transaction():
+        row = await conn.fetchrow(
+            """INSERT INTO project_members (project_id, staff_id, role_on_team, added_by)
+               VALUES ($1, $2, $3, $4)
+               ON CONFLICT (project_id, staff_id) DO UPDATE SET role_on_team = EXCLUDED.role_on_team
+               RETURNING *""",
+            project_id,
+            body.staff_id,
+            body.role_on_team,
+            current["sub"],
+        )
+        await conn.execute(
+            """INSERT INTO audit_log (actor_id, action, target_type, target_id, detail)
+               VALUES ($1, 'grant_project_membership', 'project_members', $2, $3)""",
+            current["sub"],
+            project_id,
+            json.dumps({"staff_id": body.staff_id, "role_on_team": body.role_on_team}),
+        )
+        return dict(row)
+
+
+@app.get("/projects/{project_id}/members")
+async def list_members(project_id: str, current: dict = Depends(get_current_staff)):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT pm.staff_id, pm.role_on_team, s.full_name
+               FROM project_members pm JOIN staff s ON s.id = pm.staff_id
+               WHERE pm.project_id = $1 ORDER BY s.full_name""",
+            project_id,
+        )
+        return [dict(r) for r in rows]
+
+
+@app.post("/projects/{project_id}/tasks")
+async def create_task_rest(project_id: str, body: TaskCreate, current: dict = Depends(get_current_staff)):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        if current["role"] != "admin":
+            member = await conn.fetchrow(
+                "SELECT 1 FROM project_members WHERE project_id = $1 AND staff_id = $2",
+                project_id,
+                current["sub"],
+            )
+            project = await conn.fetchrow("SELECT lab_id FROM projects WHERE id = $1", project_id)
+            in_lab = project and str(project["lab_id"]) == current["lab_id"]
+            if not member and not in_lab:
+                raise HTTPException(status_code=403, detail="Not a member of this project")
+        row = await conn.fetchrow(
+            """INSERT INTO tasks (project_id, title, description, assignee_id, start_date, end_date)
+               VALUES ($1, $2, $3, $4, $5, $6) RETURNING *""",
+            project_id,
+            body.title,
+            body.description,
+            body.assignee_id,
+            date.fromisoformat(body.start_date),
+            date.fromisoformat(body.end_date),
+        )
+        task = dict(row)
+        await manager.broadcast(
+            {
+                "type": "task_created",
+                "task_id": str(task["id"]),
+                "project_id": str(task["project_id"]),
+            }
+        )
+        return task
 
 
 @app.get("/projects")

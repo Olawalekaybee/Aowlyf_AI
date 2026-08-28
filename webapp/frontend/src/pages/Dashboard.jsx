@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { api, wsUrl } from '../api.js'
 import GanttChart from '../components/GanttChart.jsx'
+import NewProjectForm from '../components/NewProjectForm.jsx'
+import NewTaskForm from '../components/NewTaskForm.jsx'
+import AddMemberForm from '../components/AddMemberForm.jsx'
 
 const LAB_CODES = {
   Electronics: 'ELEC',
@@ -25,48 +28,70 @@ function labCode(name) {
 
 export default function Dashboard({ token, staff, onLogout }) {
   const [projects, setProjects] = useState([])
+  const [labs, setLabs] = useState([])
   const [labsById, setLabsById] = useState({})
+  const [staffOptions, setStaffOptions] = useState([])
   const [selected, setSelected] = useState(null)
   const [tasks, setTasks] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const [projectList, labs] = await Promise.all([api.projects(token), api.labs(token)])
-        setProjects(projectList)
-        setLabsById(Object.fromEntries(labs.map((l) => [l.id, l.name])))
-        if (projectList.length) setSelected(projectList[0].id)
-      } catch (err) {
-        setError(err.message)
-      } finally {
-        setLoading(false)
-      }
+  const [showNewProject, setShowNewProject] = useState(false)
+  const [showNewTask, setShowNewTask] = useState(false)
+  const [showAddMember, setShowAddMember] = useState(false)
+
+  const isAdmin = staff.role === 'admin'
+  const canManageTeam = isAdmin || staff.can_grant_team_membership
+
+  async function loadCore() {
+    setLoading(true)
+    try {
+      const [projectList, labList, staffList] = await Promise.all([
+        api.projects(token),
+        api.labs(token),
+        api.staff(token),
+      ])
+      setProjects(projectList)
+      setLabs(labList)
+      setLabsById(Object.fromEntries(labList.map((l) => [l.id, l.name])))
+      setStaffOptions(staffList)
+      if (projectList.length && !selected) setSelected(projectList[0].id)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
     }
-    load()
-  }, [token])
+  }
 
   useEffect(() => {
+    loadCore()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token])
+
+  function loadTasks() {
     if (!selected) return
     api.projectTasks(selected, token).then(setTasks).catch((err) => setError(err.message))
-  }, [selected, token])
+  }
+
+  useEffect(loadTasks, [selected, token])
 
   useEffect(() => {
     const ws = new WebSocket(wsUrl())
     ws.onmessage = (event) => {
       const msg = JSON.parse(event.data)
-      if (msg.type === 'task_updated' && msg.project_id === selected) {
+      if (msg.project_id !== selected) return
+      if (msg.type === 'task_updated') {
         setTasks((prev) =>
           prev.map((t) =>
-            t.id === msg.task_id
-              ? { ...t, progress_pct: msg.progress_pct, status: msg.status }
-              : t,
+            t.id === msg.task_id ? { ...t, progress_pct: msg.progress_pct, status: msg.status } : t,
           ),
         )
+      } else if (msg.type === 'task_created') {
+        loadTasks()
       }
     }
     return () => ws.close()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected])
 
   function logout() {
@@ -74,6 +99,20 @@ export default function Dashboard({ token, staff, onLogout }) {
     localStorage.removeItem('aowlyf_staff')
     onLogout()
   }
+
+  async function activateProject(projectId) {
+    try {
+      await api.updateProjectStatus(projectId, 'active', token)
+      loadCore()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const selectedProject = projects.find((p) => p.id === selected)
+  const labStaffOptions = staffOptions.filter(
+    (s) => !selectedProject || s.lab_id === selectedProject.lab_id,
+  )
 
   return (
     <div className="console">
@@ -93,12 +132,15 @@ export default function Dashboard({ token, staff, onLogout }) {
 
       <div className="console-body">
         <aside className="console-sidebar">
-          <h2>Projects</h2>
+          <div className="console-sidebar-head">
+            <h2>Projects</h2>
+            <button className="btn-small" onClick={() => setShowNewProject(true)}>
+              + New
+            </button>
+          </div>
           {loading && <p className="console-muted">Loading…</p>}
           {!loading && !projects.length && (
-            <p className="console-muted">
-              No projects visible yet. Projects are created via Claude or the MCP tools directly.
-            </p>
+            <p className="console-muted">No projects yet — create the first one.</p>
           )}
           <ul className="project-list">
             {projects.map((p) => (
@@ -111,6 +153,11 @@ export default function Dashboard({ token, staff, onLogout }) {
                   <span className="project-name">{p.name}</span>
                   <span className={`project-status project-status-${p.status}`}>{p.status}</span>
                 </button>
+                {isAdmin && p.status === 'proposed' && (
+                  <button className="btn-activate" onClick={() => activateProject(p.id)}>
+                    Activate
+                  </button>
+                )}
               </li>
             ))}
           </ul>
@@ -119,14 +166,66 @@ export default function Dashboard({ token, staff, onLogout }) {
         <main className="console-main">
           {error && <div className="console-error">{error}</div>}
           {selected ? (
-            <GanttChart tasks={tasks} />
+            <>
+              <div className="main-toolbar">
+                <h2>{selectedProject?.name}</h2>
+                <div className="main-toolbar-actions">
+                  {canManageTeam && (
+                    <button className="btn-small" onClick={() => setShowAddMember(true)}>
+                      + Add member
+                    </button>
+                  )}
+                  <button className="btn-small" onClick={() => setShowNewTask(true)}>
+                    + New task
+                  </button>
+                </div>
+              </div>
+              <GanttChart tasks={tasks} />
+            </>
           ) : (
             <div className="gantt-empty">
-              <p>Select a project to see its timeline.</p>
+              <p>Select or create a project to see its timeline.</p>
             </div>
           )}
         </main>
       </div>
+
+      {showNewProject && (
+        <NewProjectForm
+          token={token}
+          labs={labs}
+          isAdmin={isAdmin}
+          onClose={() => setShowNewProject(false)}
+          onCreated={(project) => {
+            setShowNewProject(false)
+            setProjects((prev) => [...prev, project])
+            setSelected(project.id)
+          }}
+        />
+      )}
+
+      {showNewTask && selected && (
+        <NewTaskForm
+          token={token}
+          projectId={selected}
+          staffOptions={labStaffOptions}
+          onClose={() => setShowNewTask(false)}
+          onCreated={() => {
+            setShowNewTask(false)
+            loadTasks()
+          }}
+        />
+      )}
+
+      {showAddMember && selected && (
+        <AddMemberForm
+          token={token}
+          projectId={selected}
+          staffOptions={labStaffOptions}
+          onClose={() => setShowAddMember(false)}
+          onAdded={() => setShowAddMember(false)}
+        />
+      )}
     </div>
   )
 }

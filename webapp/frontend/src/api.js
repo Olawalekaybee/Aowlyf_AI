@@ -21,9 +21,18 @@ export const api = {
   login: (email, password) => request('/auth/login', { method: 'POST', body: { email, password } }),
   me: (token) => request('/auth/me', { token }),
   labs: (token) => request('/labs', { token }),
+  staff: (token) => request('/staff', { token }),
   projects: (token) => request('/projects', { token }),
+  createProject: (body, token) => request('/projects', { method: 'POST', body, token }),
+  updateProjectStatus: (projectId, status, token) =>
+    request(`/projects/${projectId}`, { method: 'PATCH', body: { status }, token }),
   projectTasks: (projectId, token) => request(`/projects/${projectId}/tasks`, { token }),
+  createTask: (projectId, body, token) =>
+    request(`/projects/${projectId}/tasks`, { method: 'POST', body, token }),
   updateTask: (taskId, body, token) => request(`/tasks/${taskId}`, { method: 'PATCH', body, token }),
+  projectMembers: (projectId, token) => request(`/projects/${projectId}/members`, { token }),
+  addMember: (projectId, body, token) =>
+    request(`/projects/${projectId}/members`, { method: 'POST', body, token }),
 }
 
 export function wsUrl() {

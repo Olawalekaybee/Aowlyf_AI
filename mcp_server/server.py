@@ -13,6 +13,7 @@ Run:
 Then point Claude Desktop at it (see docs/claude_desktop_config.json.example).
 """
 
+import json
 import os
 import uuid
 from datetime import date
@@ -171,7 +172,7 @@ async def add_project_member(acting_as: str, project_id: str, staff_id: str, rol
         await conn.execute(
             """INSERT INTO audit_log (actor_id, action, target_type, target_id, detail)
                VALUES ($1, 'grant_project_membership', 'project_members', $2, $3)""",
-            actor["id"], project_id, {"staff_id": staff_id, "role_on_team": role_on_team},
+            actor["id"], project_id, json.dumps({"staff_id": staff_id, "role_on_team": role_on_team}),
         )
         return dict(row)
 
