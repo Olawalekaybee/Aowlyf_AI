@@ -4,6 +4,10 @@ import GanttChart from '../components/GanttChart.jsx'
 import NewProjectForm from '../components/NewProjectForm.jsx'
 import NewTaskForm from '../components/NewTaskForm.jsx'
 import AddMemberForm from '../components/AddMemberForm.jsx'
+import NewConcernForm from '../components/NewConcernForm.jsx'
+import NewProcurementForm from '../components/NewProcurementForm.jsx'
+import ConcernsPanel from '../components/ConcernsPanel.jsx'
+import ProcurementPanel from '../components/ProcurementPanel.jsx'
 
 const LAB_CODES = {
   Electronics: 'ELEC',
@@ -21,7 +25,7 @@ const LAB_CODES = {
 }
 
 function labCode(name) {
-  if (!name) return '—'
+  if (!name) return '-'
   if (LAB_CODES[name]) return LAB_CODES[name]
   return name.split(' ').map((w) => w[0]).join('').slice(0, 4).toUpperCase()
 }
@@ -39,6 +43,9 @@ export default function Dashboard({ token, staff, onLogout }) {
   const [showNewProject, setShowNewProject] = useState(false)
   const [showNewTask, setShowNewTask] = useState(false)
   const [showAddMember, setShowAddMember] = useState(false)
+  const [showNewConcern, setShowNewConcern] = useState(false)
+  const [showNewProcurement, setShowNewProcurement] = useState(false)
+  const [view, setView] = useState('gantt')
 
   const isAdmin = staff.role === 'admin'
   const canManageTeam = isAdmin || staff.can_grant_team_membership
@@ -122,6 +129,26 @@ export default function Dashboard({ token, staff, onLogout }) {
           AOWLYF_AI
         </div>
         <div className="console-user">
+          <nav className="console-nav">
+            <button
+              className={view === 'gantt' ? 'nav-btn active' : 'nav-btn'}
+              onClick={() => setView('gantt')}
+            >
+              Projects
+            </button>
+            <button
+              className={view === 'concerns' ? 'nav-btn active' : 'nav-btn'}
+              onClick={() => setView('concerns')}
+            >
+              Concerns
+            </button>
+            <button
+              className={view === 'procurement' ? 'nav-btn active' : 'nav-btn'}
+              onClick={() => setView('procurement')}
+            >
+              Procurement
+            </button>
+          </nav>
           <span>{staff.full_name}</span>
           <span className="console-role">{staff.role}</span>
           <button className="console-logout" onClick={logout}>
@@ -130,6 +157,16 @@ export default function Dashboard({ token, staff, onLogout }) {
         </div>
       </header>
 
+      <div className="console-toolbar-global">
+        <button className="btn-small" onClick={() => setShowNewConcern(true)}>
+          + Raise concern
+        </button>
+        <button className="btn-small" onClick={() => setShowNewProcurement(true)}>
+          + Procurement request
+        </button>
+      </div>
+
+      {view === 'gantt' && (
       <div className="console-body">
         <aside className="console-sidebar">
           <div className="console-sidebar-head">
@@ -140,7 +177,7 @@ export default function Dashboard({ token, staff, onLogout }) {
           </div>
           {loading && <p className="console-muted">Loading…</p>}
           {!loading && !projects.length && (
-            <p className="console-muted">No projects yet — create the first one.</p>
+            <p className="console-muted">No projects yet, create the first one.</p>
           )}
           <ul className="project-list">
             {projects.map((p) => (
@@ -189,6 +226,19 @@ export default function Dashboard({ token, staff, onLogout }) {
           )}
         </main>
       </div>
+      )}
+
+      {view === 'concerns' && (
+        <div className="console-body-single">
+          <ConcernsPanel token={token} isAdmin={isAdmin} />
+        </div>
+      )}
+
+      {view === 'procurement' && (
+        <div className="console-body-single">
+          <ProcurementPanel token={token} isAdmin={isAdmin} />
+        </div>
+      )}
 
       {showNewProject && (
         <NewProjectForm
@@ -224,6 +274,24 @@ export default function Dashboard({ token, staff, onLogout }) {
           staffOptions={labStaffOptions}
           onClose={() => setShowAddMember(false)}
           onAdded={() => setShowAddMember(false)}
+        />
+      )}
+
+      {showNewConcern && (
+        <NewConcernForm
+          token={token}
+          projects={projects}
+          onClose={() => setShowNewConcern(false)}
+          onCreated={() => setShowNewConcern(false)}
+        />
+      )}
+
+      {showNewProcurement && (
+        <NewProcurementForm
+          token={token}
+          projects={projects}
+          onClose={() => setShowNewProcurement(false)}
+          onCreated={() => setShowNewProcurement(false)}
         />
       )}
     </div>

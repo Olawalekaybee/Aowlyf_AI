@@ -33,6 +33,21 @@ export const api = {
   projectMembers: (projectId, token) => request(`/projects/${projectId}/members`, { token }),
   addMember: (projectId, body, token) =>
     request(`/projects/${projectId}/members`, { method: 'POST', body, token }),
+  createConcern: (body, token) => request('/concerns', { method: 'POST', body, token }),
+  concerns: (status, token) =>
+    request(`/concerns${status ? `?status=${status}` : ''}`, { token }),
+  myConcerns: (token) => request('/concerns/mine', { token }),
+  resolveConcern: (concernId, adminResponse, token) =>
+    request(`/concerns/${concernId}/resolve`, {
+      method: 'PATCH',
+      body: { admin_response: adminResponse },
+      token,
+    }),
+  createProcurement: (body, token) => request('/procurement', { method: 'POST', body, token }),
+  procurementRequests: (token) => request('/procurement', { token }),
+  myProcurementRequests: (token) => request('/procurement/mine', { token }),
+  updateProcurementStatus: (requestId, status, token) =>
+    request(`/procurement/${requestId}`, { method: 'PATCH', body: { status }, token }),
 }
 
 export function wsUrl() {

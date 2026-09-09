@@ -1,9 +1,9 @@
 """
-AOWLYF_AI — Phase 3 web API
+AOWLYF_AI: Phase 3 web API
 
 A separate, human-facing API from the MCP server. The MCP server (in
 mcp_server/) is how Claude reads/writes the platform on your behalf. This
-API is how staff log in directly and the Gantt dashboard gets its data —
+API is how staff log in directly and the Gantt dashboard gets its data,
 same Postgres database, same permission rules, different front door.
 
 Run:
@@ -93,6 +93,27 @@ class TaskCreate(BaseModel):
 class MemberAdd(BaseModel):
     staff_id: str
     role_on_team: str = "contributor"
+
+
+class ConcernCreate(BaseModel):
+    category: str
+    message: str
+    project_id: Optional[str] = None
+
+
+class ConcernResolve(BaseModel):
+    admin_response: str
+
+
+class ProcurementCreate(BaseModel):
+    item: str
+    quantity: int = 1
+    justification: Optional[str] = None
+    project_id: Optional[str] = None
+
+
+class ProcurementStatusUpdate(BaseModel):
+    status: str
 
 
 class ConnectionManager:
@@ -205,7 +226,7 @@ async def list_staff(current: dict = Depends(get_current_staff)):
 async def create_project(body: ProjectCreate, current: dict = Depends(get_current_staff)):
     """Anyone can propose a project. Admin-created projects go straight to
     'active'; everyone else's start as 'proposed' until an admin activates
-    them — team ADDITIONS are still admin/permitted-only, separately, via
+    them. Team ADDITIONS are still admin/permitted-only, separately, via
     /projects/{id}/members."""
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -394,12 +415,148 @@ async def update_task(task_id: str, body: TaskUpdate, current: dict = Depends(ge
         return task
 
 
+@app.post("/concerns")
+async def create_concern(body: ConcernCreate, current: dict = Depends(get_current_staff)):
+    """Any staff member can raise a concern. It is routed straight into
+    the admin queue for review."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """INSERT INTO concerns (raised_by, project_id, category, message)
+               VALUES ($1, $2, $3, $4) RETURNING *""",
+            current["sub"],
+            body.project_id,
+            body.category,
+            body.message,
+        )
+        return dict(row)
+
+
+@app.get("/concerns")
+async def list_concerns(status: Optional[str] = None, current: dict = Depends(get_current_staff)):
+    """Admin only. Staff can see the concerns they personally raised
+    through /concerns/mine instead."""
+    if current["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Only the admin can view the full concern queue")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT c.*, s.full_name AS raised_by_name, p.name AS project_name
+               FROM concerns c
+               JOIN staff s ON s.id = c.raised_by
+               LEFT JOIN projects p ON p.id = c.project_id
+               WHERE ($1::text IS NULL OR c.status = $1)
+               ORDER BY c.created_at DESC""",
+            status,
+        )
+        return [dict(r) for r in rows]
+
+
+@app.get("/concerns/mine")
+async def list_my_concerns(current: dict = Depends(get_current_staff)):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT c.*, p.name AS project_name
+               FROM concerns c
+               LEFT JOIN projects p ON p.id = c.project_id
+               WHERE c.raised_by = $1
+               ORDER BY c.created_at DESC""",
+            current["sub"],
+        )
+        return [dict(r) for r in rows]
+
+
+@app.patch("/concerns/{concern_id}/resolve")
+async def resolve_concern(concern_id: str, body: ConcernResolve, current: dict = Depends(get_current_staff)):
+    if current["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Only the admin can resolve concerns")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """UPDATE concerns SET admin_response = $1, status = 'resolved', resolved_at = now()
+               WHERE id = $2 RETURNING *""",
+            body.admin_response,
+            concern_id,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Concern not found")
+        return dict(row)
+
+
+@app.post("/procurement")
+async def create_procurement_request(body: ProcurementCreate, current: dict = Depends(get_current_staff)):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """INSERT INTO procurement_requests (requested_by, project_id, item, quantity, justification)
+               VALUES ($1, $2, $3, $4, $5) RETURNING *""",
+            current["sub"],
+            body.project_id,
+            body.item,
+            body.quantity,
+            body.justification,
+        )
+        return dict(row)
+
+
+@app.get("/procurement")
+async def list_procurement_requests(current: dict = Depends(get_current_staff)):
+    if current["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Only the admin can view the procurement queue")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT pr.*, s.full_name AS requested_by_name, p.name AS project_name
+               FROM procurement_requests pr
+               JOIN staff s ON s.id = pr.requested_by
+               LEFT JOIN projects p ON p.id = pr.project_id
+               ORDER BY pr.created_at DESC"""
+        )
+        return [dict(r) for r in rows]
+
+
+@app.get("/procurement/mine")
+async def list_my_procurement_requests(current: dict = Depends(get_current_staff)):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT pr.*, p.name AS project_name
+               FROM procurement_requests pr
+               LEFT JOIN projects p ON p.id = pr.project_id
+               WHERE pr.requested_by = $1
+               ORDER BY pr.created_at DESC""",
+            current["sub"],
+        )
+        return [dict(r) for r in rows]
+
+
+@app.patch("/procurement/{request_id}")
+async def update_procurement_status(
+    request_id: str, body: ProcurementStatusUpdate, current: dict = Depends(get_current_staff)
+):
+    if current["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Only the admin can update procurement status")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """UPDATE procurement_requests SET status = $1, handled_by = $2, updated_at = now()
+               WHERE id = $3 RETURNING *""",
+            body.status,
+            current["sub"],
+            request_id,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Procurement request not found")
+        return dict(row)
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         while True:
-            # Dashboard doesn't need to send anything meaningful — this just
+            # Dashboard doesn't need to send anything meaningful. This just
             # keeps the connection open so we can push updates to it.
             await websocket.receive_text()
     except WebSocketDisconnect:

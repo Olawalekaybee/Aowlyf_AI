@@ -25,7 +25,7 @@ export default function GanttChart({ tasks }) {
       <div className="gantt-empty">
         <p>No tasks on this project yet.</p>
         <p className="gantt-empty-sub">
-          Tasks appear here as soon as they're created — via Claude, or the MCP tools directly.
+          Tasks appear here as soon as they're created, via Claude, or the MCP tools directly.
         </p>
       </div>
     )
@@ -59,7 +59,7 @@ export default function GanttChart({ tasks }) {
                 <div
                   className={`gantt-bar gantt-bar-${task.status}`}
                   style={{ left: `${left}%`, width: `${width}%` }}
-                  title={`${STATUS_LABEL[task.status]} — ${task.progress_pct}%`}
+                  title={`${STATUS_LABEL[task.status]}: ${task.progress_pct}%`}
                 >
                   <div className="gantt-bar-fill" style={{ width: `${task.progress_pct}%` }} />
                   {task.status === 'in_progress' && <span className="gantt-pulse" />}
