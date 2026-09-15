@@ -43,6 +43,7 @@ app = FastAPI(title="AOWLYF_AI API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://localhost:4173"],
+    allow_origin_regex=r"http://(10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+|192\.168\.\d+\.\d+):(5173|4173)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -62,6 +63,11 @@ async def get_pool() -> asyncpg.Pool:
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
 
 
 class TaskUpdate(BaseModel):
@@ -194,6 +200,24 @@ async def login(body: LoginRequest):
 @app.get("/auth/me")
 async def me(current: dict = Depends(get_current_staff)):
     return current
+
+
+@app.post("/auth/change-password")
+async def change_password(body: ChangePasswordRequest, current: dict = Depends(get_current_staff)):
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT password_hash FROM staff WHERE id = $1", current["sub"])
+        if not row or not bcrypt.checkpw(body.current_password.encode(), row["password_hash"].encode()):
+            raise HTTPException(status_code=401, detail="Current password is incorrect")
+        new_hash = bcrypt.hashpw(body.new_password.encode(), bcrypt.gensalt()).decode()
+        await conn.execute(
+            "UPDATE staff SET password_hash = $1, updated_at = now() WHERE id = $2",
+            new_hash,
+            current["sub"],
+        )
+        return {"detail": "Password updated"}
 
 
 @app.get("/labs")

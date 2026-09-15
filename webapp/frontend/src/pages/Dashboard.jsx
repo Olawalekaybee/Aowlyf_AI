@@ -5,6 +5,7 @@ import NewProjectForm from '../components/NewProjectForm.jsx'
 import NewTaskForm from '../components/NewTaskForm.jsx'
 import AddMemberForm from '../components/AddMemberForm.jsx'
 import NewConcernForm from '../components/NewConcernForm.jsx'
+import ChangePasswordForm from '../components/ChangePasswordForm.jsx'
 import NewProcurementForm from '../components/NewProcurementForm.jsx'
 import ConcernsPanel from '../components/ConcernsPanel.jsx'
 import ProcurementPanel from '../components/ProcurementPanel.jsx'
@@ -44,6 +45,7 @@ export default function Dashboard({ token, staff, onLogout }) {
   const [showNewTask, setShowNewTask] = useState(false)
   const [showAddMember, setShowAddMember] = useState(false)
   const [showNewConcern, setShowNewConcern] = useState(false)
+  const [showChangePassword, setShowChangePassword] = useState(false)
   const [showNewProcurement, setShowNewProcurement] = useState(false)
   const [view, setView] = useState('gantt')
 
@@ -151,6 +153,9 @@ export default function Dashboard({ token, staff, onLogout }) {
           </nav>
           <span>{staff.full_name}</span>
           <span className="console-role">{staff.role}</span>
+          <button className="btn-small" onClick={() => setShowChangePassword(true)}>
+            Change password
+          </button>
           <button className="console-logout" onClick={logout}>
             Sign out
           </button>
@@ -293,6 +298,10 @@ export default function Dashboard({ token, staff, onLogout }) {
           onClose={() => setShowNewProcurement(false)}
           onCreated={() => setShowNewProcurement(false)}
         />
+      )}
+
+      {showChangePassword && (
+        <ChangePasswordForm token={token} onClose={() => setShowChangePassword(false)} />
       )}
     </div>
   )

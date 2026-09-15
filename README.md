@@ -232,14 +232,46 @@ Both queues also expose a personal view for non-admins
 (`/concerns/mine`, `/procurement/mine`) so staff can track what they
 raised without seeing the admin-only full queue.
 
-**Not yet built:** Phase 4, WhatsApp reminders via Twilio, and a
-"change my password" flow for staff logging in for the first time.
+**Not yet built:** a "change my password" flow for staff logging in for
+the first time is now built, see Phase 3 notes above. Everything through
+Phase 4 is complete.
 
-**Phase 4: WhatsApp reminders**
-Twilio WhatsApp Business API (there's a whole Twilio skill set already
-available for this (template approval, 24-hour session rules, etc.). A
-worker reads `notifications` due in the next N minutes/hours and sends them,
-driven off task deadlines and project milestones.
+**Phase 4: WhatsApp reminders** (done)
+See `scripts/run_whatsapp_reminders.py`. One script does two jobs, meant
+to run periodically, for example every hour via cron:
+
+1. Scans open tasks due within `REMINDER_WINDOW_HOURS` (defaults to 24)
+   and schedules a reminder notification for the assignee, skipping
+   anyone who does not have a WhatsApp number on file or who already has
+   one scheduled or sent for that task.
+2. Sends every notification that is due, using the Twilio WhatsApp API,
+   and marks each one sent or failed.
+
+Setup:
+```bash
+cd scripts
+pip install -r requirements.txt
+export DATABASE_URL=postgresql://impactlab:changeme@localhost:5433/impactlab
+export TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+export TWILIO_AUTH_TOKEN=your_auth_token
+export TWILIO_WHATSAPP_FROM=whatsapp:+14155238886
+python run_whatsapp_reminders.py
+```
+
+Two important constraints to know before relying on this:
+
+- **Sandbox testing:** on a Twilio trial account, each recipient must
+  text `join <your-code>` to `+14155238886` once, and must rejoin every
+  3 days. The sandbox also caps you at 50 messages a day and 1 message
+  every 3 seconds.
+- **The 24-hour window:** WhatsApp only allows free-form messages, plain
+  text like the ones this script sends, within 24 hours of the
+  recipient's last inbound message to your number. Outside that window,
+  Twilio silently fails to deliver unless you switch to a Meta-approved
+  message template. For a small internal team, having everyone message
+  the sandbox number once a day is the simplest way to keep the window
+  open during testing. Moving to production means registering a real
+  WhatsApp Business sender.
 
 **Phase 5: Agentic layer**
 - Concern triage agent: classifies incoming concerns, drafts a suggested
@@ -260,8 +292,9 @@ project level.
 
 ## 7. Immediate next decision
 
-Phases 1 through 3 are complete: the local infrastructure, staff and
-folder provisioning, and the login layer plus live Gantt dashboard with
-project, task, team, concern, and procurement management all working end
-to end. Phase 4 (WhatsApp reminders) is the natural next step, since it is
-the one piece of the original spec still outstanding.
+Phases 1 through 4 are complete: the local infrastructure, staff and
+folder provisioning, the login layer plus live Gantt dashboard with
+project, task, team, concern, and procurement management, and WhatsApp
+deadline reminders, all working end to end. Phase 5 (the agentic layer)
+is the natural next step, since it is the piece that starts using the
+local LLM and RAG stack that has been running since Phase 1.

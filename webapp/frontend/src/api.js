@@ -20,6 +20,12 @@ async function request(path, { method = 'GET', body, token } = {}) {
 export const api = {
   login: (email, password) => request('/auth/login', { method: 'POST', body: { email, password } }),
   me: (token) => request('/auth/me', { token }),
+  changePassword: (currentPassword, newPassword, token) =>
+    request('/auth/change-password', {
+      method: 'POST',
+      body: { current_password: currentPassword, new_password: newPassword },
+      token,
+    }),
   labs: (token) => request('/labs', { token }),
   staff: (token) => request('/staff', { token }),
   projects: (token) => request('/projects', { token }),

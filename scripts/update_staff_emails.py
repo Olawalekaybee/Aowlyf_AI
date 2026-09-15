@@ -5,11 +5,18 @@ Use this when staff were originally provisioned without an email or
 WhatsApp number, and you have now filled those in on staff_roster.csv.
 This updates their existing record in place. Their password and account
 stay exactly as they were, only the contact details change. This is what
-enables login for staff who could not log in before.
+enables login and WhatsApp reminders for staff who could not use them
+before.
 
 Matches existing staff rows by full_name and lab, the same matching rule
-provision_staff.py uses when no email is set yet. Safe to re-run, only
-rows whose email actually changed get updated.
+provision_staff.py uses when no email is set yet. Safe to re-run. Email
+and WhatsApp number are checked and updated independently of each other,
+so re-running after only adding a WhatsApp number still works even if
+the email already synced in an earlier run.
+
+Phone numbers are normalized by stripping all whitespace before storing,
+so "+234 813 862 1959" in the CSV becomes "+2348138621959" in the
+database. WhatsApp delivery requires a number with no spaces.
 
 Usage:
     pip install -r requirements.txt
@@ -19,6 +26,7 @@ Usage:
 
 import csv
 import os
+import re
 import sys
 
 import psycopg2
@@ -30,6 +38,12 @@ def get_lab_id(cur, lab_name):
     cur.execute("SELECT id FROM labs WHERE name = %s", (lab_name,))
     row = cur.fetchone()
     return row[0] if row else None
+
+
+def normalize_phone(number):
+    if not number:
+        return None
+    return re.sub(r"\s+", "", number)
 
 
 def main(csv_path):
@@ -47,11 +61,13 @@ def main(csv_path):
             full_name = row["full_name"].strip()
             lab_name = row["lab"].strip()
             email = row["email"].strip() or None
-            whatsapp = row["whatsapp_number"].strip() or None
+            whatsapp = normalize_phone(row["whatsapp_number"].strip() or None)
 
-            if not full_name or not lab_name or not email:
+            if not full_name or not lab_name:
                 continue
             if full_name.startswith("[FILL IN"):
+                continue
+            if not email and not whatsapp:
                 continue
 
             lab_id = get_lab_id(cur, lab_name)
@@ -60,7 +76,7 @@ def main(csv_path):
                 continue
 
             cur.execute(
-                "SELECT id, email FROM staff WHERE full_name = %s AND lab_id = %s",
+                "SELECT id, email, whatsapp_number FROM staff WHERE full_name = %s AND lab_id = %s",
                 (full_name, lab_id),
             )
             existing = cur.fetchone()
@@ -68,14 +84,17 @@ def main(csv_path):
                 skipped.append(f"{full_name} (no matching staff record in this lab)")
                 continue
 
-            staff_id, current_email = existing
-            if current_email == email:
+            staff_id, current_email, current_whatsapp = existing
+            email_changed = bool(email) and current_email != email
+            whatsapp_changed = bool(whatsapp) and current_whatsapp != whatsapp
+
+            if not email_changed and not whatsapp_changed:
                 already_current += 1
                 continue
 
             cur.execute(
                 """UPDATE staff
-                   SET email = %s,
+                   SET email = COALESCE(%s, email),
                        whatsapp_number = COALESCE(%s, whatsapp_number),
                        updated_at = now()
                    WHERE id = %s""",
@@ -92,7 +111,7 @@ def main(csv_path):
         print(f"  - {name}")
 
     if already_current:
-        print(f"\n{already_current} record(s) already had the correct email, no change needed.")
+        print(f"\n{already_current} record(s) already had correct details, no change needed.")
 
     if skipped:
         print(f"\nSkipped {len(skipped)} row(s):")
