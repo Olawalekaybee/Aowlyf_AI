@@ -1,4 +1,4 @@
-# AOWLYF_AI: Impact Lab / Innov8 Hub Ops Platform (DGX Spark + Claude)
+# AOWLYF_AI:  Ops Platform (DGX Spark + Claude)
 
 A private, locally-run agentic system for managing every lab, project, staff
 member, folder, timeline, concern, and procurement request across the Impact
